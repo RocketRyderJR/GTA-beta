@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Los Santos 3D 1v1 Split-Screen</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1e62b5; font-family: Arial, sans-serif; color: #fff; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; top: 15px; left: 20px; right: 20px; display: flex; justify-content: space-between; pointer-events: none; font-weight: bold; }
+  .box { background: rgba(0,0,0,0.75); padding: 10px 16px; border-left: 4px solid #fbc531; }
+  .box.r { border-left: none; border-right: 4px solid #e84118; text-align: right; }
+  .bar { width: 160px; height: 12px; background: #333; margin-top: 5px; }
+  .fill { width: 100%; height: 100%; background: #4cd137; }
+  .fill.red { background: #e84118; }
+  #help { position: absolute; bottom: 15px; right: 20px; background: rgba(0,0,0,0.75); padding: 8px 12px; font-size: 13px; border-radius: 4px; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div class="box">P1 KILLS: <span id="s1">0</span><div class="bar"><div class="fill" id="h1"></div></div></div>
+  <div class="box r"><span id="p2Name">BOT</span> KILLS: <span id="s2">0</span><div class="bar"><div class="fill red" id="h2"></div></div></div>
+</div>
+<div id="help"><b>P1:</b> WASD + Q/E + SPACE &bull; <b>P2:</b> Arrows + ENTER &bull; <b>Press M:</b> Toggle Split-Screen / Bot</div>
+
+<script>
+window.onerror = function(msg, url, line) {
+  document.body.innerHTML = "<div style='padding:30px;font-size:20px;background:#900;color:#fff'>Error: " + msg + " (Line " + line + ")</div>";
+};
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+function resize() { canvas.width = window.innerWidth || 800; canvas.height = window.innerHeight || 600; }
+window.addEventListener("resize", resize);
+resize();
+
+const SIZE = 24;
+const map = [];
+for (let r = 0; r < SIZE; r++) {
+  const row = [];
+  for (let c = 0; c < SIZE; c++) {
+    if (r === 0 || r === SIZE - 1 || c === 0 || c === SIZE - 1) row.push(1);
+    else if ((r >= 4 && r <= 6 || r >= 10 && r <= 13 || r >= 17 && r <= 19) &&
+             (c >= 4 && c <= 6 || c >= 10 && c <= 13 || c >= 17 && c <= 19)) {
+      row.push((r + c) % 3 === 0 ? 3 : (r + c) % 2 === 0 ? 2 : 1);
+    } else row.push(0);
+  }
+  map.push(row);
+}
+
+let splitScreen = true; // Starts directly in 2-Player Split-Screen 1v1!
+const p1 = { x: 2.5, y: 2.5, a: 0.6, hp: 100, kills: 0, recoil: 0, bob: 0, flash: 0, shot: 0 };
+const p2 = { x: 20.5, y: 20.5, a: 3.8, hp: 100, kills: 0, recoil: 0, bob: 0, flash: 0, shot: 0, timer: 0 };
+const keys = {};
+
+function updateModeUI() {
+  document.getElementById("p2Name").textContent = splitScreen ? "P2" : "BOT";
+}
+updateModeUI();
+
+window.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "Space") shoot(p1, p2);
+  if (e.code === "Enter" && splitScreen) shoot(p2, p1);
+  if (e.code === "KeyM") {
+    splitScreen = !splitScreen;
+    updateModeUI();
+    resetRound();
+  }
+});
+window.addEventListener("keyup", e => { keys[e.code] = false; });
+
+canvas.addEventListener("click", () => {
+  if (!splitScreen && document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+    canvas.requestPointerLock();
+  }
+  shoot(p1, p2);
+});
+window.addEventListener("mousemove", e => {
+  if (!splitScreen && document.pointerLockElement === canvas) p1.a += e.movementX * 0.003;
+});
+
+function free(x, y) {
+  const r = 0.25;
+  return map[Math.floor(y - r)][Math.floor(x - r)] === 0 &&
+         map[Math.floor(y - r)][Math.floor(x + r)] === 0 &&
+         map[Math.floor(y + r)][Math.floor(x - r)] === 0 &&
+         map[Math.floor(y + r)][Math.floor(x + r)] === 0;
+}
+
+function resetRound() {
+  p1.x = 2.5; p1.y = 2.5; p1.a = 0.6; p1.hp = 100;
+  p2.x = 20.5; p2.y = 20.5; p2.a = 3.8; p2.hp = 100;
+  document.getElementById("s1").textContent = p1.kills;
+  document.getElementById("s2").textContent = p2.kills;
+  document.getElementById("h1").style.width = "100%";
+  document.getElementById("h2").style.width = "100%";
+}
+
+function shoot(attacker, target) {
+  const now = performance.now();
+  if (now - attacker.shot < 200) return;
+  attacker.shot = now;
+  attacker.recoil = 18;
+
+  const dx = Math.cos(attacker.a), dy = Math.sin(attacker.a);
+  for (let d = 0; d < 22; d += 0.2) {
+    const tx = attacker.x + dx * d, ty = attacker.y + dy * d;
+    if (map[Math.floor(ty)][Math.floor(tx)] !== 0) break;
+    if (Math.hypot(tx - target.x, ty - target.y) < 0.5) {
+      target.hp -= 25;
+      target.flash = 0.15;
+      if (target.hp <= 0) {
+        attacker.kills++;
+        resetRound();
+      } else {
+        document.getElementById("h1").style.width = Math.max(0, p1.hp) + "%";
+        document.getElementById("h2").style.width = Math.max(0, p2.hp) + "%";
+      }
+      break;
+    }
+  }
+}
+
+function renderViewport(cam, rival, vx, vw, rivalColor) {
+  const H = canvas.height, half = H / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(vx, 0, vw, H);
+  ctx.clip();
+
+  ctx.fillStyle = "#f59b42"; ctx.fillRect(vx, 0, vw, half);
+  ctx.fillStyle = "#2b2d30"; ctx.fillRect(vx, half, vw, half);
+
+  const fov = Math.PI / 3;
+  const rays = Math.max(1, Math.floor(vw / 3));
+  const sw = vw / rays;
+  const zBuf = new Array(rays);
+
+  for (let i = 0; i < rays; i++) {
+    const ra = cam.a - fov / 2 + (i / rays) * fov;
+    const sin = Math.sin(ra), cos = Math.cos(ra);
+    let d = 0, hit = 0;
+    while (d < 26) {
+      d += 0.08;
+      const mx = Math.floor(cam.x + cos * d), my = Math.floor(cam.y + sin * d);
+      if (mx < 0 || mx >= SIZE || my < 0 || my >= SIZE) { hit = 1; break; }
+      if (map[my][mx] !== 0) { hit = map[my][mx]; break; }
+    }
+    const pd = Math.max(0.1, d * Math.cos(ra - cam.a));
+    zBuf[i] = pd;
+    const wh = (H / pd) * (hit === 3 ? 2.2 : hit === 2 ? 1.7 : 1.4);
+    const shade = Math.max(0.25, 1 - pd / 26);
+    ctx.fillStyle = hit === 3 ? `rgb(${Math.floor(85*shade)},${Math.floor(155*shade)},${Math.floor(215*shade)})`
+                  : hit === 2 ? `rgb(${Math.floor(215*shade)},${Math.floor(185*shade)},${Math.floor(140*shade)})`
+                  : `rgb(${Math.floor(170*shade)},${Math.floor(175*shade)},${Math.floor(180*shade)})`;
+    ctx.fillRect(vx + i * sw, half + (H / pd) * 0.5 - wh, sw + 1, wh);
+  }
+
+  // Draw Rival Character
+  const dist = Math.hypot(rival.x - cam.x, rival.y - cam.y);
+  let sa = Math.atan2(rival.y - cam.y, rival.x - cam.x) - cam.a;
+  while (sa < -Math.PI) sa += Math.PI * 2;
+  while (sa > Math.PI) sa -= Math.PI * 2;
+  if (Math.abs(sa) < fov * 0.75 && dist > 0.4) {
+    const sx = vx + (0.5 + sa / fov) * vw, sh = (H / dist) * 0.85, swidth = sh * 0.45;
+    const ri = Math.floor((sx - vx) / sw);
+    if (ri >= 0 && ri < rays && dist < zBuf[ri]) {
+      ctx.fillStyle = rival.flash > 0 ? "#fff" : rivalColor;
+      ctx.fillRect(sx - swidth / 2, half + (H / dist) * 0.5 - sh, swidth, sh);
+    }
+  }
+
+  // First-Person Gun
+  ctx.fillStyle = "#111";
+  ctx.fillRect(vx + vw * 0.62 + Math.cos(cam.bob) * 8, H - 140 + Math.abs(Math.sin(cam.bob)) * 8 + cam.recoil, 36, 160);
+
+  // Center Crosshair
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(vx + vw / 2 - 8, half - 1, 16, 2);
+  ctx.fillRect(vx + vw / 2 - 1, half - 8, 2, 16);
+
+  ctx.restore();
+}
+
+let last = performance.now();
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+
+  if (p1.recoil > 0) p1.recoil = Math.max(0, p1.recoil - 90 * dt);
+  if (p2.recoil > 0) p2.recoil = Math.max(0, p2.recoil - 90 * dt);
+  if (p1.flash > 0) p1.flash -= dt;
+  if (p2.flash > 0) p2.flash -= dt;
+
+  // P1 Controls
+  if (keys["KeyQ"] || (!splitScreen && keys["ArrowLeft"])) p1.a -= 2.4 * dt;
+  if (keys["KeyE"] || (!splitScreen && keys["ArrowRight"])) p1.a += 2.4 * dt;
+
+  let m1x = 0, m1y = 0;
+  const c1 = Math.cos(p1.a), s1 = Math.sin(p1.a);
+  if (keys["KeyW"] || (!splitScreen && keys["ArrowUp"])) { m1x += c1; m1y += s1; }
+  if (keys["KeyS"] || (!splitScreen && keys["ArrowDown"])) { m1x -= c1; m1y -= s1; }
+  if (keys["KeyA"]) { m1x += s1; m1y -= c1; }
+  if (keys["KeyD"]) { m1x -= s1; m1y += c1; }
+
+  if (m1x !== 0 || m1y !== 0) {
+    const len = Math.hypot(m1x, m1y), spd = 5 * dt;
+    if (free(p1.x + (m1x / len) * spd, p1.y)) p1.x += (m1x / len) * spd;
+    if (free(p1.x, p1.y + (m1y / len) * spd)) p1.y += (m1y / len) * spd;
+    p1.bob += 10 * dt;
+  }
+
+  if (splitScreen) {
+    // P2 Human Controls (Arrow Keys)
+    if (keys["ArrowLeft"]) p2.a -= 2.4 * dt;
+    if (keys["ArrowRight"]) p2.a += 2.4 * dt;
+    let m2x = 0, m2y = 0;
+    const c2 = Math.cos(p2.a), s2 = Math.sin(p2.a);
+    if (keys["ArrowUp"]) { m2x += c2; m2y += s2; }
+    if (keys["ArrowDown"]) { m2x -= c2; m2y -= s2; }
+    if (m2x !== 0 || m2y !== 0) {
+      const spd = 5 * dt;
+      if (free(p2.x + m2x * spd, p2.y)) p2.x += m2x * spd;
+      if (free(p2.x, p2.y + m2y * spd)) p2.y += m2y * spd;
+      p2.bob += 10 * dt;
+    }
+
+    const hw = canvas.width / 2;
+    renderViewport(p1, p2, 0, hw, "#e84118");
+    renderViewport(p2, p1, hw, hw, "#00a8ff");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(hw - 2, 0, 4, canvas.height);
+  } else {
+    // Bot AI Controls
+    const ex = p1.x - p2.x, ey = p1.y - p2.y, dist = Math.hypot(ex, ey);
+    p2.a = Math.atan2(ey, ex);
+    if (dist > 3.5) {
+      if (free(p2.x + (ex / dist) * 3 * dt, p2.y)) p2.x += (ex / dist) * 3 * dt;
+      if (free(p2.x, p2.y + (ey / dist) * 3 * dt)) p2.y += (ey / dist) * 3 * dt;
+    }
+    p2.timer -= dt;
+    if (p2.timer <= 0 && dist < 11) { p2.timer = 1.4; shoot(p2, p1); }
+
+    renderViewport(p1, p2, 0, canvas.width, "#e84118");
+  }
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+
+
